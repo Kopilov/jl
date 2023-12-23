@@ -48,7 +48,7 @@ if($help || (!$csvFile && !$xlsxFile && !$useApi))
         $0 --csv c:/path/to/transactions.csv
 
 смотерть результат
-    взять комплектный шаблон отсюда https://github.com/vopl/jl/blob/master/stat.xlsx
+    взять комплектный шаблон отсюда https://github.com/vopl/jl/raw/main/stat.xlsx
     скопипастить в него выхлоп скрипта, внимательно проследить чтобы при копипасте не нарушилась табличная структура данных, чтобы все чиселки попали в такие же на шаблоне
     наблюдать графики
         cpy    - Current Percentage Yield, накопленный процентный доход
@@ -61,8 +61,7 @@ if($help || (!$csvFile && !$xlsxFile && !$useApi))
 
 замечания можно сливать на гитхаб в раздел issues тут https://github.com/vopl/jl/issues (автор НЕ гарантирует что будет их отрабатывать)
 
-лицензия WTFPL (public domain)
-";
+лицензия WTFPL (public domain)";
 
 	exit;
 }
