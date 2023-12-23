@@ -1,0 +1,396 @@
+#!/usr/bin/perl
+
+use v5.10;
+use strict;
+use feature 'state';
+use utf8;
+use open qw( :std :encoding(utf-8) );
+use POSIX;
+use Data::Dumper;
+use Data::Dumper::Concise;
+
+Finance::Math::IRR->import() if defined eval { require Finance::Math::IRR };
+warn "try `cpan install Finance::Math::IRR`" unless defined &main::xirr;
+
+############################################################################################
+use Getopt::Long qw(:config no_auto_abbrev);
+my $help;
+my $csvFile;
+my $xlsxFile;
+my $useApi;
+my $hideBalance = 0;
+GetOptions(
+	'help'    		=> \$help,
+	'xlsx=s'   		=> \$xlsxFile,
+	'csv=s'   		=> \$csvFile,
+	'api'     		=> \$useApi,
+	'hide-balance'  => \$hideBalance,
+) or die "bad command line arguments";
+
+if($help || (!$csvFile && !$xlsxFile && !$useApi))
+{
+	say "отказ от отвественности: автор данной программы не несет никакой ответственности в связи с ее использованием ни перед кем
+
+забрать лог транзакций
+    тут https://jetlend.ru/invest/v3/notifications внизу зеленая кнопка 'Экспорт операций', жать, сохранить себе файл transactions.xlsx
+
+скормить полученный файл этому скрипту
+    $0 --xlsx c:/path/to/transactions.xlsx
+
+если неосиливается парс екзеля, можно через csv:
+    конвертировать полученный файл в .csv
+        например открыть его в екзеле и сохранить в формате .csv
+        разделитель полей - запятая
+        без квотирования значений
+        и надо чтобы разделитель целой/дробной части в числах был точка
+
+    скормить полученный файл этому скрипту
+        $0 --csv c:/path/to/transactions.csv
+
+смотерть результат
+    взять комплектный шаблон отсюда https://github.com/vopl/jl/blob/master/stat.xlsx
+    скопипастить в него выхлоп скрипта, внимательно проследить чтобы при копипасте не нарушилась табличная структура данных, чтобы все чиселки попали в такие же на шаблоне
+    наблюдать графики
+        cpy    - Current Percentage Yield, накопленный процентный доход
+        apy1   - Annual Percentage Yield, годовая процентная доходность в скользящем окне 1 день
+        apy7   - аналогично за неделю
+        apy30  - аналогично за месяц
+        apy91  - аналогично за квартал
+        apyAll - аналогично за весь период
+        irr    - Internal rate of return, не будет работать если не обеспечить соответствующий перловый модуль. Но оно в принципе и не надо так как apyAll лучше
+
+замечания можно сливать на гитхаб в раздел issues тут https://github.com/vopl/jl/issues (автор НЕ гарантирует что будет их отрабатывать)
+
+лицензия WTFPL (public domain)
+";
+
+	exit;
+}
+
+############################################################################################
+my @events;
+
+if($xlsxFile)
+{
+	Spreadsheet::ParseXLSX->import() if defined eval { require Spreadsheet::ParseXLSX };
+	die "try `cpan install Spreadsheet::ParseXLSX`" unless defined &Spreadsheet::ParseXLSX::new;
+
+	die "file `$xlsxFile' is not found" unless -f $xlsxFile;
+	my $parser = Spreadsheet::ParseXLSX->new;
+	my $workbook = $parser->parse($xlsxFile);
+    die $parser->error() unless $workbook;
+
+    my $worksheet = ($workbook->worksheets())[0] or die "no worksheet found in `$xlsxFile'";
+ 
+    my ($rowMin, $rowMax) = $worksheet->row_range();
+    die "malformed structure in `$xlsxFile'" if $rowMax <= $rowMin;
+    my ($colMin, $colMax) = $worksheet->col_range();
+    die "malformed structure in `$xlsxFile'" if $colMax <= $colMin;
+    
+    sub val($$)
+    {
+		my ($row, $col) = @_;
+		my $cell = $worksheet->get_cell($row, $col);
+		return $cell->value() if $cell;
+		return undef;
+    }
+    
+    sub colIdx($)
+    {
+		my ($key) = @_;
+		for my $col ($colMin .. $colMax)
+		{
+			return $col if $key eq val($rowMin, $col);
+		}
+		
+		return -1;
+	}
+	
+	(my $colDate    = colIdx('Дата'                 )) >=0 or die "malformed structure in `$xlsxFile'";
+	(my $colOp      = colIdx('Тип операции'         )) >=0 or die "malformed structure in `$xlsxFile'";
+	(my $colIn      = colIdx('Приход'               )) >=0 or die "malformed structure in `$xlsxFile'";
+	(my $colOut     = colIdx('Расход'               )) >=0 or die "malformed structure in `$xlsxFile'";
+	(my $colChange  = colIdx('Доход после удержания')) >=0 or die "malformed structure in `$xlsxFile'";
+	(my $colSIR     = colIdx('НПД'                  )) >=0 or die "malformed structure in `$xlsxFile'";
+ 
+ 	foreach my $row($rowMin+1 .. $rowMax)
+	{
+		my $event = { date => val($row, $colDate)};
+		
+		if('Пополнение счета' eq val($row, $colOp))# TODO а вывод как называется? Его тоже сюда со знаком минус
+		{
+			$event->{deposit} = val($row, $colIn);
+		}
+		else
+		{
+			$event->{profit} = val($row, $colChange);
+			$event->{profit} += val($row, $colSIR);
+		}
+		
+		push(@events, $event);
+	}
+}
+elsif($csvFile)
+{
+	open(my $csvHandle, "<$csvFile") or die "can't open `$csvFile': $!";
+	my $csv = [map {chomp;[split(',', $_, -1)]} <$csvHandle>];
+	close($csvHandle);
+
+	my $header = shift @$csv;
+	use List::MoreUtils qw(firstidx);
+	(my $colDate    = firstidx {$_ eq 'Дата'                 } @$header) >=0 or die "malformed csv";
+	(my $colOp      = firstidx {$_ eq 'Тип операции'         } @$header) >=0 or die "malformed csv";
+	(my $colIn      = firstidx {$_ eq 'Приход'               } @$header) >=0 or die "malformed csv";
+	(my $colOut     = firstidx {$_ eq 'Расход'               } @$header) >=0 or die "malformed csv";
+	(my $colChange  = firstidx {$_ eq 'Доход после удержания'} @$header) >=0 or die "malformed csv";
+	(my $colSIR     = firstidx {$_ eq 'НПД'                  } @$header) >=0 or die "malformed csv";
+
+ 	$colIn     -= scalar @$header;
+ 	$colOut    -= scalar @$header;
+ 	$colChange -= scalar @$header;
+ 	$colSIR    -= scalar @$header;
+
+	foreach my $line(@$csv)
+	{
+		my $event = { date => $line->[$colDate]};
+		
+		if('Пополнение счета' eq $line->[$colOp])# TODO а вывод как называется? Его тоже сюда со знаком минус
+		{
+			$event->{deposit} = $line->[$colIn];
+		}
+		else
+		{
+			$event->{profit} = $line->[$colChange];
+			$event->{profit} += $line->[$colSIR];
+		}
+		
+		push(@events, $event);
+	}
+}
+elsif($useApi)
+{
+	use lib './lib';
+	JL::Api->import() if defined eval { require JL::Api };
+	die "no JL::Api available" unless defined &JL::Api::new;
+	my $api = JL::Api->new();
+	$api->setRetries(0);
+
+	foreach my $rec(@{$api->get('account/notifications/v3', undef, 60*10)})
+	{
+		my $event = { date => $rec->{date}};
+		
+		if('110' eq $rec->{event_type})#Пополнение счета # TODO а вывод как называется? Его тоже сюда со знаком минус
+		{
+			$event->{deposit} = $rec->{income};
+		}
+		else
+		{
+			$event->{profit} += $rec->{summary_interest_rate};
+			$event->{profit} += $rec->{revenue};
+			$event->{profit} -= $rec->{loss};
+		}
+		
+		push(@events, $event);
+	}
+}
+else
+{
+	die "unknown mode";
+}
+
+############################################################################################
+{
+	my $state = 
+	{
+		date => undef,
+		balance => 0,
+		deposit => 0,
+		profit => 0,
+	};
+	@events = sort {$a->{date} cmp $b->{date}} @events;
+	foreach my $event(@events)
+	{
+		my $nextDate = parseTs($event->{date});
+		$nextDate -= $nextDate % (24*60*60);
+		$state->{date} = $nextDate unless $state->{date};
+		
+		flushDay($state) while $state->{date} < $nextDate;
+		
+		$state->{deposit} += $event->{deposit};
+		$state->{profit} += $event->{profit};
+	}
+
+	flushDay($state) if $state->{profit} || $state->{deposit};
+	say "overall balance: ", ($hideBalance ? -1 : sumStr($state->{balance}, !1));
+}
+exit;
+
+
+
+############################################################################################
+############################################################################################
+############################################################################################
+############################################################################################
+sub parseTs($)
+{
+    my ($str) = @_;
+    return undef unless $str =~ m/^(\d\d\d\d)-(\d\d)-(\d\d).(\d\d):(\d\d):(\d\d)/;
+    return mktime($6, $5, $4, $3, $2-1, $1-1900) + 3*60*60;
+}
+
+############################################################################################
+sub dateTs($)
+{
+	my ($unixtime) = @_;
+	return strftime("%Y-%m-%d", localtime($unixtime - 3*60*60))
+}
+
+############################################################################################
+sub sumStr($;$)
+{
+    my ($s, $compact) = @_;
+    $s ||= 0;
+    $compact = 1 unless defined $compact;
+
+    my $mult = '';
+    if($compact)
+    {
+        if($s > 1000*1000*1000)
+        {
+            $s /= 1000*1000*1000;
+            $mult = 'G';
+        }
+        elsif($s > 1000*1000)
+        {
+            $s /= 1000*1000;
+            $mult = 'M';
+        }
+        elsif($s > 1000)
+        {
+            $s /= 1000;
+            $mult = 'k';
+        }
+    }
+
+    return sprintf "%.2f%s", $s, $mult;
+}
+
+############################################################################################
+sub rateStr($;$$)
+{
+    my ($rate, $nanSym, $suffix) = @_;
+    $nanSym = '-' unless defined $nanSym;
+    $suffix = '' unless defined $suffix;
+    return $nanSym unless defined $rate && $rate eq $rate+0;
+    return sprintf("%2.2f%s", $rate*100, $suffix);
+}
+
+############################################################################################
+sub history()
+{
+	state $history = [];
+	return $history;
+}
+
+############################################################################################
+sub daysInYear($)
+{
+	my ($unixtime) = @_;
+	return ([localtime($unixtime - 3*60*60)]->[5] % 4) ? 365 : 366;
+}
+
+############################################################################################
+sub apy(;$)
+{
+	state $weightLikeXirr = 0;
+	
+	my $daysAvailable = scalar @{history()};
+	
+	my ($days) = @_;
+	$days = $daysAvailable unless defined $days;
+	
+	if($days <= $daysAvailable)
+	{
+		my $sumValue = 0;
+		my $sumWeight = 0;
+		my $weight = 0;
+		
+		my $startIdx = $daysAvailable - $days;
+		for(my $i=0; $i<$daysAvailable; ++$i)
+		{
+			my $hrec = history()->[$i];
+			
+			if($i >= $startIdx && $hrec->{balance} > 0)
+			{
+				state $log2 = log(2);
+				my $value = log(($hrec->{profit} + $hrec->{balance}) / $hrec->{balance}) / $log2;
+				my $daysInYear = daysInYear($hrec->{date});
+				$sumValue += $value * $daysInYear * $weight;
+				$sumWeight += $weight;
+			}
+			
+			$weight += $hrec->{deposit} if $weightLikeXirr;
+			$weight += $hrec->{deposit} + $hrec->{profit} unless $weightLikeXirr;
+		}
+		
+		return (2 ** ($sumValue / $sumWeight)) - 1 if $sumWeight;
+	}
+	
+	return undef;
+}
+
+############################################################################################
+sub flushDay($)
+{
+	my ($state) = @_;
+	
+	state $headerSayed = 0;
+	if(!$headerSayed)
+	{
+		$headerSayed = 1;
+		say "date,deposit,balance,profit,apy1,apy7,apy30,apy91,apyAll,irr,cpy";
+	}
+
+	push(@{history()}, {%{$state}});
+
+	my $apy1  = apy(1);
+	my $apy7  = apy(7);
+	my $apy30 = apy(30);
+	my $apy91 = apy(91);
+	my $apyAll = apy();
+	
+	my $irr;
+	if(defined &main::xirr)
+	{
+		my %cashflow;
+		foreach my $hrec(@{history()})
+		{
+			$cashflow{dateTs($hrec->{date})} = $hrec->{deposit} if $hrec->{deposit};
+		}
+		$cashflow{dateTs($state->{date})} -= $state->{balance} + $state->{deposit} + $state->{profit};
+		#warn Dumper(\%cashflow);
+		$irr = xirr(%cashflow, precision => 0.00001) if scalar keys %cashflow > 1;
+	}
+
+	my $daysAvailable = scalar @{history()};
+	my $cpy = $apyAll / daysInYear($state->{date}) * ($daysAvailable - 1) if $daysAvailable > 1;
+
+	say join(',', 
+		dateTs($state->{date}),
+		$hideBalance ? -1 : sumStr($state->{deposit}, !1),
+		$hideBalance ? -1 : sumStr($state->{balance}, !1),
+		$hideBalance ? -1 : sumStr($state->{profit}, !1),
+		rateStr($apy1),
+		rateStr($apy7),
+		rateStr($apy30),
+		rateStr($apy91),
+		rateStr($apyAll),
+		rateStr($irr),
+		rateStr($cpy));
+
+	$state->{balance} += $state->{deposit};
+	$state->{balance} += $state->{profit};
+	$state->{deposit} = 0;
+	$state->{profit} = 0;
+	$state->{date} += 24*60*60;
+}
