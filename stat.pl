@@ -116,13 +116,18 @@ if($xlsxFile)
 	{
 		my $event = { date => val($row, $colDate)};
 		
-		if('Пополнение счета' eq val($row, $colOp))# TODO а вывод как называется? Его тоже сюда со знаком минус
+		my $op = val($row, $colOp);
+		if('Пополнение счета' eq $op)
 		{
-			$event->{deposit} = val($row, $colIn);
+			$event->{deposit} += val($row, $colIn);
+		}
+		elsif('Вывод средств' eq $op)
+		{
+			$event->{deposit} -= val($row, $colOut);
 		}
 		else
 		{
-			$event->{profit} = val($row, $colChange);
+			$event->{profit} += val($row, $colChange);
 			$event->{profit} += val($row, $colSIR);
 		}
 		
@@ -153,13 +158,18 @@ elsif($csvFile)
 	{
 		my $event = { date => $line->[$colDate]};
 		
-		if('Пополнение счета' eq $line->[$colOp])# TODO а вывод как называется? Его тоже сюда со знаком минус
+		my $op = $line->[$colOp];
+		if('Пополнение счета' eq $op)
 		{
-			$event->{deposit} = $line->[$colIn];
+			$event->{deposit} += $line->[$colIn];
+		}
+		elsif('Вывод средств' eq $op)
+		{
+			$event->{deposit} -= $line->[$colOut];
 		}
 		else
 		{
-			$event->{profit} = $line->[$colChange];
+			$event->{profit} += $line->[$colChange];
 			$event->{profit} += $line->[$colSIR];
 		}
 		
@@ -178,9 +188,13 @@ elsif($useApi)
 	{
 		my $event = { date => $rec->{date}};
 		
-		if('110' eq $rec->{event_type})#Пополнение счета # TODO а вывод как называется? Его тоже сюда со знаком минус
+		if('110' eq $rec->{event_type})#Пополнение счета
 		{
-			$event->{deposit} = $rec->{income};
+			$event->{deposit} += $rec->{income};
+		}
+		elsif('120' eq $rec->{event_type})#Вывод со счета
+		{
+			$event->{deposit} -= $rec->{expense};
 		}
 		else
 		{
