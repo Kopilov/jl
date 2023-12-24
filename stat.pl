@@ -120,7 +120,7 @@ if($xlsxFile)
         {
             $event->{deposit} += val($row, $colIn) - val($row, $colOut);
         }
-        elsif('Платеж по займу' eq $op)
+        elsif('Платеж по займу' eq $op || 'Дефолт' eq $op || 'Зачисление по судебному взысканию' eq $op)
         {
             $event->{revenue_i} += val($row, $colChange);
         }
@@ -165,7 +165,7 @@ elsif($csvFile)
         {
             $event->{deposit} += $line->[$colIn] - $line->[$colOut];
         }
-        elsif('Платеж по займу' eq $op)
+        elsif('Платеж по займу' eq $op || 'Дефолт' eq $op || 'Зачисление по судебному взысканию' eq $op)
         {
             $event->{revenue_i} += $line->[$colChange];
         }
@@ -197,7 +197,7 @@ elsif($useApi)
         {
             $event->{deposit} += $rec->{income} - $rec->{expense};
         }
-        elsif('310' eq $rec->{event_type})#Платеж по займу
+        elsif('310' eq $rec->{event_type} || '320' eq $rec->{event_type} || '220' eq $rec->{event_type})#Платеж по займу, Зачисление средств в рамках судебного взыскания, Дефолт
         {
             $event->{revenue_i} += $rec->{revenue} - $rec->{loss};
         }
