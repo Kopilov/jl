@@ -24,7 +24,7 @@ GetOptions(
     'xlsx=s'          => \$xlsxFile,
     'csv=s'           => \$csvFile,
     'api'             => \$useApi,
-    'hide-balance'  => \$hideBalance,
+    'hide-balance'   => \$hideBalance,
 ) or die "bad command line arguments";
 
 if($help || (!$csvFile && !$xlsxFile && !$useApi))
@@ -116,22 +116,21 @@ if($xlsxFile)
         my $event = { date => val($row, $colDate)};
         
         my $op = val($row, $colOp);
-        if('Пополнение счета' eq $op)
+        if('Пополнение счета' eq $op || 'Вывод средств' eq $op)
         {
-            $event->{deposit} += val($row, $colIn);
+            $event->{deposit} += val($row, $colIn) - val($row, $colOut);
         }
-        elsif('Вывод средств' eq $op)
+        elsif('Платеж по займу' eq $op)
         {
-            $event->{deposit} -= val($row, $colOut);
+            $event->{revenue_i} += val($row, $colChange);
         }
         elsif('Покупка займа на вторичном рынке' eq $op || 'Продажа займа на вторичном рынке' eq $op)
         {
-            $event->{revenue_s} += val($row, $colChange);
-            $event->{revenue_s} += val($row, $colSIR);
+            $event->{revenue_s} += val($row, $colChange) + val($row, $colSIR);
         }
         else
         {
-            $event->{revenue_i} += val($row, $colChange);
+            $event->{revenue_o} += val($row, $colChange);
         }
         
         push(@events, $event);
@@ -162,22 +161,21 @@ elsif($csvFile)
         my $event = { date => $line->[$colDate]};
         
         my $op = $line->[$colOp];
-        if('Пополнение счета' eq $op)
+        if('Пополнение счета' eq $op || 'Вывод средств' eq $op)
         {
-            $event->{deposit} += $line->[$colIn];
+            $event->{deposit} += $line->[$colIn] - $line->[$colOut];
         }
-        elsif('Вывод средств' eq $op)
+        elsif('Платеж по займу' eq $op)
         {
-            $event->{deposit} -= $line->[$colOut];
+            $event->{revenue_i} += $line->[$colChange];
         }
         elsif('Покупка займа на вторичном рынке' eq $op || 'Продажа займа на вторичном рынке' eq $op)
         {
-            $event->{revenue_s} += $line->[$colChange];
-            $event->{revenue_s} += $line->[$colSIR];
+            $event->{revenue_s} += $line->[$colChange] + $line->[$colSIR];
         }
         else
         {
-            $event->{revenue_i} += $line->[$colChange];
+            $event->{revenue_o} += $line->[$colChange];
         }
         
         push(@events, $event);
@@ -195,24 +193,21 @@ elsif($useApi)
     {
         my $event = { date => $rec->{date}};
         
-        if('110' eq $rec->{event_type})#Пополнение счета
+        if('110' eq $rec->{event_type} || '120' eq $rec->{event_type})#Пополнение счета,Вывод со счета
         {
-            $event->{deposit} += $rec->{income};
+            $event->{deposit} += $rec->{income} - $rec->{expense};
         }
-        elsif('120' eq $rec->{event_type})#Вывод со счета
+        elsif('310' eq $rec->{event_type})#Платеж по займу
         {
-            $event->{deposit} -= $rec->{expense};
+            $event->{revenue_i} += $rec->{revenue} - $rec->{loss};
         }
         elsif('340' eq $rec->{event_type} || '342' eq $rec->{event_type} || '330' eq $rec->{event_type})#Покупка займа, Покупка по стратегии, Продажа займа
         {
-            $event->{revenue_s} += $rec->{summary_interest_rate};
-            $event->{revenue_s} += $rec->{revenue};
-            $event->{revenue_s} -= $rec->{loss};
+            $event->{revenue_s} += $rec->{summary_interest_rate} + $rec->{revenue} - $rec->{loss};
         }
         else
         {
-            $event->{revenue_i} += $rec->{revenue};
-            $event->{revenue_i} -= $rec->{loss};
+            $event->{revenue_o} += $rec->{revenue} - $rec->{loss};
         }
         
         push(@events, $event);
@@ -232,6 +227,7 @@ else
         deposit => 0,
         revenue_i => 0,
         revenue_s => 0,
+        revenue_o => 0,
     };
     @events = sort {$a->{date} cmp $b->{date}} @events;
     foreach my $event(@events)
@@ -245,9 +241,10 @@ else
         $state->{deposit} += $event->{deposit};
         $state->{revenue_i} += $event->{revenue_i};
         $state->{revenue_s} += $event->{revenue_s};
+        $state->{revenue_o} += $event->{revenue_o};
     }
 
-    flushDay($state) if $state->{revenue_i} || $state->{revenue_s} || $state->{deposit};
+    flushDay($state) if $state->{revenue_i} || $state->{revenue_s} || $state->{revenue_o} || $state->{deposit};
     say "overall balance: ", ($hideBalance ? -1 : sumStr($state->{balance}, !1));
 }
 exit;
@@ -377,10 +374,11 @@ sub flushDay($)
     {
         _i => sub { return $_[0]->{revenue_i}; },
         _s => sub { return $_[0]->{revenue_s}; },
-        ''  => sub { return $_[0]->{revenue_i} + $_[0]->{revenue_s}; },
+        _o => sub { return $_[0]->{revenue_o}; },
+        ''  => sub { return $_[0]->{revenue_i} + $_[0]->{revenue_s} + $_[0]->{revenue_o}; },
     };
     
-    my @fnames = ('', '_i', '_s');
+    my @fnames = ('', '_i', '_s', '_o');
     
     state $headerSayed = 0;
     if(!$headerSayed)
@@ -399,7 +397,7 @@ sub flushDay($)
         {
             $cashflow{dateTs($hrec->{date})} = $hrec->{deposit} if $hrec->{deposit};
         }
-        $cashflow{dateTs($state->{date})} -= $state->{balance} + $state->{deposit} + $state->{revenue_i} + $state->{revenue_s};
+        $cashflow{dateTs($state->{date})} -= $state->{balance} + $state->{deposit} + $state->{revenue_i} + $state->{revenue_s} + $state->{revenue_o};
         #warn Dumper(\%cashflow);
         $irr = xirr(%cashflow, precision => 0.00001) if scalar keys %cashflow > 1;
     }
@@ -420,7 +418,7 @@ sub flushDay($)
         my $apyAll = apy($fetcher);
         
         my $daysAvailable = scalar @{history()};
-        my $cpy = $apyAll / daysInYear($state->{date}) * ($daysAvailable - 1) if $daysAvailable > 1;
+        my $cpy = $apyAll / daysInYear($state->{date}) * $daysAvailable if $daysAvailable;
 
         print ',', join(',', 
             $hideBalance ? -1 : sumStr($fetcher->($state), !1),
@@ -435,10 +433,11 @@ sub flushDay($)
 
     if($state->{balance})
     {
-        $state->{balance} += $state->{deposit} + $state->{revenue_i} + $state->{revenue_s};
+        $state->{balance} += $state->{deposit} + $state->{revenue_i} + $state->{revenue_s} + $state->{revenue_o};
         $state->{deposit} = 0;
         $state->{revenue_i} = 0;
         $state->{revenue_s} = 0;
+        $state->{revenue_o} = 0;
     }
     else
     {
