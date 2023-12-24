@@ -124,10 +124,14 @@ if($xlsxFile)
         {
             $event->{deposit} -= val($row, $colOut);
         }
+        elsif('Покупка займа на вторичном рынке' eq $op || 'Продажа займа на вторичном рынке' eq $op)
+        {
+            $event->{revenue_s} += val($row, $colChange);
+            $event->{revenue_s} += val($row, $colSIR);
+        }
         else
         {
-            $event->{profit} += val($row, $colChange);
-            $event->{profit} += val($row, $colSIR);
+            $event->{revenue_i} += val($row, $colChange);
         }
         
         push(@events, $event);
@@ -166,10 +170,14 @@ elsif($csvFile)
         {
             $event->{deposit} -= $line->[$colOut];
         }
+        elsif('Покупка займа на вторичном рынке' eq $op || 'Продажа займа на вторичном рынке' eq $op)
+        {
+            $event->{revenue_s} += $line->[$colChange];
+            $event->{revenue_s} += $line->[$colSIR];
+        }
         else
         {
-            $event->{profit} += $line->[$colChange];
-            $event->{profit} += $line->[$colSIR];
+            $event->{revenue_i} += $line->[$colChange];
         }
         
         push(@events, $event);
@@ -195,11 +203,16 @@ elsif($useApi)
         {
             $event->{deposit} -= $rec->{expense};
         }
+        elsif('340' eq $rec->{event_type} || '342' eq $rec->{event_type} || '330' eq $rec->{event_type})#Покупка займа, Покупка по стратегии, Продажа займа
+        {
+            $event->{revenue_s} += $rec->{summary_interest_rate};
+            $event->{revenue_s} += $rec->{revenue};
+            $event->{revenue_s} -= $rec->{loss};
+        }
         else
         {
-            $event->{profit} += $rec->{summary_interest_rate};
-            $event->{profit} += $rec->{revenue};
-            $event->{profit} -= $rec->{loss};
+            $event->{revenue_i} += $rec->{revenue};
+            $event->{revenue_i} -= $rec->{loss};
         }
         
         push(@events, $event);
@@ -217,7 +230,8 @@ else
         date => undef,
         balance => 0,
         deposit => 0,
-        profit => 0,
+        revenue_i => 0,
+        revenue_s => 0,
     };
     @events = sort {$a->{date} cmp $b->{date}} @events;
     foreach my $event(@events)
@@ -229,10 +243,11 @@ else
         flushDay($state) while $state->{date} < $nextDate;
         
         $state->{deposit} += $event->{deposit};
-        $state->{profit} += $event->{profit};
+        $state->{revenue_i} += $event->{revenue_i};
+        $state->{revenue_s} += $event->{revenue_s};
     }
 
-    flushDay($state) if $state->{profit} || $state->{deposit};
+    flushDay($state) if $state->{revenue_i} || $state->{revenue_s} || $state->{deposit};
     say "overall balance: ", ($hideBalance ? -1 : sumStr($state->{balance}, !1));
 }
 exit;
@@ -312,13 +327,13 @@ sub daysInYear($)
 }
 
 ############################################################################################
-sub apy(;$)
+sub apy($;$)
 {
     state $weightLikeXirr = 0;
     
     my $daysAvailable = scalar @{history()};
     
-    my ($days) = @_;
+    my ($fetcher, $days) = @_;
     $days = $daysAvailable unless defined $days;
     
     if($days <= $daysAvailable)
@@ -335,14 +350,14 @@ sub apy(;$)
             if($i >= $startIdx && $hrec->{balance} > 0)
             {
                 state $log2 = log(2);
-                my $value = log(($hrec->{profit} + $hrec->{balance}) / $hrec->{balance}) / $log2;
+                my $value = log(($fetcher->($hrec) + $hrec->{balance}) / $hrec->{balance}) / $log2;
                 my $daysInYear = daysInYear($hrec->{date});
                 $sumValue += $value * $daysInYear * $weight;
                 $sumWeight += $weight;
             }
             
             $weight += $hrec->{deposit} if $weightLikeXirr;
-            $weight += $hrec->{deposit} + $hrec->{profit} unless $weightLikeXirr;
+            $weight += $hrec->{deposit} + $fetcher->($hrec) unless $weightLikeXirr;
         }
         
         return (2 ** ($sumValue / $sumWeight)) - 1 if $sumWeight;
@@ -356,20 +371,25 @@ sub flushDay($)
 {
     my ($state) = @_;
     
+    push(@{history()}, {%{$state}});
+    
+    my $fetchers = 
+    {
+        _i => sub { return $_[0]->{revenue_i}; },
+        _s => sub { return $_[0]->{revenue_s}; },
+        ''  => sub { return $_[0]->{revenue_i} + $_[0]->{revenue_s}; },
+    };
+    
+    my @fnames = ('_s', '_i', '');
+    
     state $headerSayed = 0;
     if(!$headerSayed)
     {
-        $headerSayed = 1;
-        say "date,deposit,balance,profit,apy1,apy7,apy30,apy91,apyAll,irr,cpy";
+        $headerSayed =1;
+        print "date,deposit,balance,irr";
+        print ",revenue$_,apy1$_,apy7$_,apy30$_,apy91$_,apyAll$_,cpy$_" foreach(@fnames);
+        print "\n";
     }
-
-    push(@{history()}, {%{$state}});
-
-    my $apy1  = apy(1);
-    my $apy7  = apy(7);
-    my $apy30 = apy(30);
-    my $apy91 = apy(91);
-    my $apyAll = apy();
     
     my $irr;
     if(defined &main::xirr)
@@ -379,30 +399,46 @@ sub flushDay($)
         {
             $cashflow{dateTs($hrec->{date})} = $hrec->{deposit} if $hrec->{deposit};
         }
-        $cashflow{dateTs($state->{date})} -= $state->{balance} + $state->{deposit} + $state->{profit};
+        $cashflow{dateTs($state->{date})} -= $state->{balance} + $state->{deposit} + $state->{revenue_i} + $state->{revenue_s};
         #warn Dumper(\%cashflow);
         $irr = xirr(%cashflow, precision => 0.00001) if scalar keys %cashflow > 1;
     }
-
-    my $daysAvailable = scalar @{history()};
-    my $cpy = $apyAll / daysInYear($state->{date}) * ($daysAvailable - 1) if $daysAvailable > 1;
-
-    say join(',', 
+    print join(',', 
         dateTs($state->{date}),
         $hideBalance ? -1 : sumStr($state->{deposit}, !1),
         $hideBalance ? -1 : sumStr($state->{balance}, !1),
-        $hideBalance ? -1 : sumStr($state->{profit}, !1),
-        rateStr($apy1),
-        rateStr($apy7),
-        rateStr($apy30),
-        rateStr($apy91),
-        rateStr($apyAll),
-        rateStr($irr),
-        rateStr($cpy));
+        rateStr($irr));
 
-    $state->{balance} += $state->{deposit};
-    $state->{balance} += $state->{profit};
+    foreach my $fname(@fnames)
+    {
+        my $fetcher = $fetchers->{$fname};
+
+        my $apy1  = apy($fetcher, 1);
+        my $apy7  = apy($fetcher, 7);
+        my $apy30 = apy($fetcher, 30);
+        my $apy91 = apy($fetcher, 91);
+        my $apyAll = apy($fetcher);
+        
+        my $daysAvailable = scalar @{history()};
+        my $cpy = $apyAll / daysInYear($state->{date}) * ($daysAvailable - 1) if $daysAvailable > 1;
+
+        print ',', join(',', 
+            $hideBalance ? -1 : sumStr($fetcher->($state), !1),
+            rateStr($apy1),
+            rateStr($apy7),
+            rateStr($apy30),
+            rateStr($apy91),
+            rateStr($apyAll),
+            rateStr($cpy));
+    }
+    print "\n";
+
+    $state->{balance} += $state->{deposit} + $state->{revenue_i} + $state->{revenue_s};
     $state->{deposit} = 0;
-    $state->{profit} = 0;
+    $state->{revenue_i} = 0;
+    $state->{revenue_s} = 0;
+
     $state->{date} += 24*60*60;
+    
+    $headerSayed = 1;
 }
