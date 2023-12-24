@@ -433,10 +433,18 @@ sub flushDay($)
     }
     print "\n";
 
-    $state->{balance} += $state->{deposit} + $state->{revenue_i} + $state->{revenue_s};
-    $state->{deposit} = 0;
-    $state->{revenue_i} = 0;
-    $state->{revenue_s} = 0;
+    if($state->{balance})
+    {
+        $state->{balance} += $state->{deposit} + $state->{revenue_i} + $state->{revenue_s};
+        $state->{deposit} = 0;
+        $state->{revenue_i} = 0;
+        $state->{revenue_s} = 0;
+    }
+    else
+    {
+        $state->{balance} += $state->{deposit};
+        $state->{deposit} = 0;
+    }
 
     $state->{date} += 24*60*60;
     
