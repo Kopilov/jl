@@ -380,7 +380,7 @@ sub flushDay($)
         ''  => sub { return $_[0]->{revenue_i} + $_[0]->{revenue_s}; },
     };
     
-    my @fnames = ('_s', '_i', '');
+    my @fnames = ('', '_i', '_s');
     
     state $headerSayed = 0;
     if(!$headerSayed)
