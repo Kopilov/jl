@@ -126,7 +126,8 @@ if($xlsxFile)
         }
         elsif('Покупка займа на вторичном рынке' eq $op || 'Продажа займа на вторичном рынке' eq $op)
         {
-            $event->{revenue_s} += val($row, $colChange) + val($row, $colSIR);
+            $event->{revenue_i} += val($row, $colSIR);
+            $event->{revenue_s} += val($row, $colChange);
         }
         else
         {
@@ -171,7 +172,8 @@ elsif($csvFile)
         }
         elsif('Покупка займа на вторичном рынке' eq $op || 'Продажа займа на вторичном рынке' eq $op)
         {
-            $event->{revenue_s} += $line->[$colChange] + $line->[$colSIR];
+            $event->{revenue_i} += $line->[$colSIR];
+            $event->{revenue_s} += $line->[$colChange];
         }
         else
         {
@@ -203,7 +205,8 @@ elsif($useApi)
         }
         elsif('340' eq $rec->{event_type} || '342' eq $rec->{event_type} || '330' eq $rec->{event_type})#Покупка займа, Покупка по стратегии, Продажа займа
         {
-            $event->{revenue_s} += $rec->{summary_interest_rate} + $rec->{revenue} - $rec->{loss};
+            $event->{revenue_i} += $rec->{summary_interest_rate};
+            $event->{revenue_s} += $rec->{revenue} - $rec->{loss};
         }
         else
         {
