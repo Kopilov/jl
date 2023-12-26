@@ -18,13 +18,13 @@ my $help;
 my $csvFile;
 my $xlsxFile;
 my $useApi;
-my $hideBalance = 0;
+my $hideMoney = 0;
 GetOptions(
     'help'            => \$help,
     'xlsx=s'          => \$xlsxFile,
     'csv=s'           => \$csvFile,
     'api'             => \$useApi,
-    'hide-balance'   => \$hideBalance,
+    'hide-money'      => \$hideMoney,
 ) or die "bad command line arguments";
 
 if($help || (!$csvFile && !$xlsxFile && !$useApi))
@@ -49,14 +49,23 @@ if($help || (!$csvFile && !$xlsxFile && !$useApi))
 4. смотерть результат
     взять комплектный шаблон отсюда https://github.com/vopl/jl/raw/main/stat.xlsx
     скопипастить в него выхлоп скрипта, внимательно проследить чтобы при копипасте не нарушилась табличная структура данных, чтобы все чиселки попали в такие же на шаблоне
-    наблюдать графики
-        cpy    - Current Percentage Yield, накопленный процентный доход
-        apy1   - Annual Percentage Yield, годовая процентная доходность в скользящем окне 1 день
-        apy7   - аналогично за неделю
-        apy30  - аналогично за месяц
-        apy91  - аналогично за квартал
-        apyAll - аналогично за весь период
-        irr    - Internal rate of return, не будет работать если не обеспечить соответствующий перловый модуль. Но оно в принципе и не надо так как apyAll лучше
+    наблюдать графики, легенда:
+        семантика
+            cpy - Current Percentage Yield, доход кумулятивно в процентах
+            apy - Annual Percentage Yield, доходность годовых
+            irr - Internal Rate of Return, это то что все считают по функции XIRR, практически то же самое что 'apy' (не будет работать если не обеспечить соответствующий перловый модуль)
+        
+        суффиксы для окон
+            7     - значение взято по скользящему окну размером в неделю
+            30    - в месяц
+            91    - в квартал
+            пусто - без окон, просто за за весь доступный период
+        
+        суффиксы для типов доходностей
+            _i    - инвестиционная часть доходности
+            _s    - спекулятивная (в связи с операциями на вторичке по ценам отличным от 100%)
+            _o    - остальная (тут например бонусы)
+            пусто - это суммарно все вышеперечисленные типы
 
 замечания можно сливать на гитхаб в раздел issues тут https://github.com/vopl/jl/issues (автор НЕ гарантирует что будет их отрабатывать)
 
@@ -108,7 +117,8 @@ if($xlsxFile)
     (my $colOp      = colIdx('Тип операции'         )) >=0 or die "malformed structure in `$xlsxFile'";
     (my $colIn      = colIdx('Приход'               )) >=0 or die "malformed structure in `$xlsxFile'";
     (my $colOut     = colIdx('Расход'               )) >=0 or die "malformed structure in `$xlsxFile'";
-    (my $colChange  = colIdx('Доход после удержания')) >=0 or die "malformed structure in `$xlsxFile'";
+    (my $colDebt    = colIdx('Основной долг'        )) >=0 or die "malformed structure in `$xlsxFile'";
+    (my $colRevenue = colIdx('Доход после удержания')) >=0 or die "malformed structure in `$xlsxFile'";
     (my $colSIR     = colIdx('НПД'                  )) >=0 or die "malformed structure in `$xlsxFile'";
  
      foreach my $row($rowMin+1 .. $rowMax)
@@ -122,17 +132,20 @@ if($xlsxFile)
         }
         elsif('Платеж по займу' eq $op || 'Дефолт' eq $op || 'Зачисление по судебному взысканию' eq $op)
         {
-            $event->{revenue_i} += val($row, $colChange);
+            $event->{revenue_i} += val($row, $colRevenue);
         }
         elsif('Покупка займа на вторичном рынке' eq $op || 'Продажа займа на вторичном рынке' eq $op)
         {
             $event->{revenue_i} += val($row, $colSIR);
-            $event->{revenue_s} += val($row, $colChange);
+            $event->{revenue_s} += val($row, $colRevenue);
         }
         else
         {
-            $event->{revenue_o} += val($row, $colChange);
+            $event->{revenue_o} += val($row, $colRevenue);
         }
+
+        $event->{assetChange} += val($row, $colDebt);
+		$event->{assetChange} += val($row, $colRevenue) if 'Дефолт' eq $op;
         
         push(@events, $event);
     }
@@ -149,12 +162,13 @@ elsif($csvFile)
     (my $colOp      = firstidx {$_ eq 'Тип операции'         } @$header) >=0 or die "malformed csv";
     (my $colIn      = firstidx {$_ eq 'Приход'               } @$header) >=0 or die "malformed csv";
     (my $colOut     = firstidx {$_ eq 'Расход'               } @$header) >=0 or die "malformed csv";
-    (my $colChange  = firstidx {$_ eq 'Доход после удержания'} @$header) >=0 or die "malformed csv";
+    (my $colDebt    = firstidx {$_ eq 'Основной долг'        } @$header) >=0 or die "malformed csv";
+    (my $colRevenue = firstidx {$_ eq 'Доход после удержания'} @$header) >=0 or die "malformed csv";
     (my $colSIR     = firstidx {$_ eq 'НПД'                  } @$header) >=0 or die "malformed csv";
 
      $colIn     -= scalar @$header;
      $colOut    -= scalar @$header;
-     $colChange -= scalar @$header;
+     $colRevenue-= scalar @$header;
      $colSIR    -= scalar @$header;
 
     foreach my $line(@$csv)
@@ -168,18 +182,21 @@ elsif($csvFile)
         }
         elsif('Платеж по займу' eq $op || 'Дефолт' eq $op || 'Зачисление по судебному взысканию' eq $op)
         {
-            $event->{revenue_i} += $line->[$colChange];
+            $event->{revenue_i} += $line->[$colRevenue];
         }
         elsif('Покупка займа на вторичном рынке' eq $op || 'Продажа займа на вторичном рынке' eq $op)
         {
             $event->{revenue_i} += $line->[$colSIR];
-            $event->{revenue_s} += $line->[$colChange];
+            $event->{revenue_s} += $line->[$colRevenue];
         }
         else
         {
-            $event->{revenue_o} += $line->[$colChange];
+            $event->{revenue_o} += $line->[$colRevenue];
         }
-        
+
+        $event->{assetChange} += $line->[$colDebt];
+		$event->{assetChange} += $line->[$colRevenue] if 'Дефолт' eq $op;
+
         push(@events, $event);
     }
 }
@@ -202,11 +219,17 @@ elsif($useApi)
         elsif('310' eq $rec->{event_type} || '320' eq $rec->{event_type} || '220' eq $rec->{event_type})#Платеж по займу, Зачисление средств в рамках судебного взыскания, Дефолт
         {
             $event->{revenue_i} += $rec->{revenue} - $rec->{loss};
+            $event->{assetChange} += $rec->{expense} - $rec->{income} + $rec->{revenue} - $rec->{loss} + $rec->{summary_interest_rate};
         }
         elsif('340' eq $rec->{event_type} || '342' eq $rec->{event_type} || '330' eq $rec->{event_type})#Покупка займа, Покупка по стратегии, Продажа займа
         {
             $event->{revenue_i} += $rec->{summary_interest_rate};
             $event->{revenue_s} += $rec->{revenue} - $rec->{loss};
+            $event->{assetChange} += $rec->{expense} - $rec->{income} + $rec->{revenue} - $rec->{loss} + $rec->{summary_interest_rate};
+        }
+        elsif('210' eq $rec->{event_type})#Выдача займа
+        {
+            $event->{assetChange} += $rec->{expense} - $rec->{income} + $rec->{revenue} - $rec->{loss} + $rec->{summary_interest_rate};
         }
         else
         {
@@ -226,8 +249,10 @@ else
     my $state = 
     {
         date => undef,
-        balance => 0,
+        capital => 0,
         deposit => 0,
+        asset => 0,
+        assetChange => 0,
         revenue_i => 0,
         revenue_s => 0,
         revenue_o => 0,
@@ -242,13 +267,15 @@ else
         flushDay($state) while $state->{date} < $nextDate;
         
         $state->{deposit} += $event->{deposit};
+        $state->{assetChange} += $event->{assetChange};
         $state->{revenue_i} += $event->{revenue_i};
         $state->{revenue_s} += $event->{revenue_s};
         $state->{revenue_o} += $event->{revenue_o};
     }
 
     flushDay($state) if $state->{revenue_i} || $state->{revenue_s} || $state->{revenue_o} || $state->{deposit};
-    say "overall balance: ", ($hideBalance ? -1 : sumStr($state->{balance}, !1));
+    say "capital: ", ($hideMoney ? -1 : sumStr($state->{capital}, !1)),
+		", asset: ", ($hideMoney ? -1 : sumStr($state->{asset}, !1));
 }
 exit;
 
@@ -327,6 +354,18 @@ sub daysInYear($)
 }
 
 ############################################################################################
+sub isStateRegular($)
+{
+    my ($state) = @_;
+    return
+        $state->{capital} > 0 &&
+        $state->{capital} + $state->{revenue_i} > 0 && 
+        $state->{capital} + $state->{revenue_s} > 0 && 
+        $state->{capital} + $state->{revenue_o} > 0 && 
+        $state->{capital} + $state->{revenue_i} + $state->{revenue_s} + $state->{revenue_o} > 0;
+}
+
+############################################################################################
 sub apy($;$)
 {
     state $weightLikeXirr = 0;
@@ -347,10 +386,10 @@ sub apy($;$)
         {
             my $hrec = history()->[$i];
             
-            if($i >= $startIdx && $hrec->{balance} > 0)
+            if($i >= $startIdx && isStateRegular($hrec))
             {
                 state $log2 = log(2);
-                my $value = log(($fetcher->($hrec) + $hrec->{balance}) / $hrec->{balance}) / $log2;
+                my $value = log(($fetcher->($hrec) + $hrec->{capital}) / $hrec->{capital}) / $log2;
                 my $daysInYear = daysInYear($hrec->{date});
                 $sumValue += $value * $daysInYear * $weight;
                 $sumWeight += $weight;
@@ -387,8 +426,8 @@ sub flushDay($)
     if(!$headerSayed)
     {
         $headerSayed =1;
-        print "date,deposit,balance,irr";
-        print ",revenue$_,apy1$_,apy7$_,apy30$_,apy91$_,apyAll$_,cpy$_" foreach(@fnames);
+        print "date,deposit,capital,asset,irr";
+        print ",revenue$_,apy1$_,apy7$_,apy30$_,apy91$_,apy$_,cpy$_" foreach(@fnames);
         print "\n";
     }
     
@@ -400,14 +439,15 @@ sub flushDay($)
         {
             $cashflow{dateTs($hrec->{date})} = $hrec->{deposit} if $hrec->{deposit};
         }
-        $cashflow{dateTs($state->{date})} -= $state->{balance} + $state->{deposit} + $state->{revenue_i} + $state->{revenue_s} + $state->{revenue_o};
+        $cashflow{dateTs($state->{date})} -= $state->{capital} + $state->{deposit} + $state->{revenue_i} + $state->{revenue_s} + $state->{revenue_o};
         #warn Dumper(\%cashflow);
         $irr = xirr(%cashflow, precision => 0.00001) if scalar keys %cashflow > 1;
     }
     print join(',', 
         dateTs($state->{date}),
-        $hideBalance ? -1 : sumStr($state->{deposit}, !1),
-        $hideBalance ? -1 : sumStr($state->{balance}, !1),
+        $hideMoney ? -1 : sumStr($state->{deposit}, !1),
+        $hideMoney ? -1 : sumStr($state->{capital}, !1),
+        $hideMoney ? -1 : sumStr($state->{asset}, !1),
         rateStr($irr));
 
     foreach my $fname(@fnames)
@@ -418,25 +458,25 @@ sub flushDay($)
         my $apy7  = apy($fetcher, 7);
         my $apy30 = apy($fetcher, 30);
         my $apy91 = apy($fetcher, 91);
-        my $apyAll = apy($fetcher);
+        my $apy = apy($fetcher);
         
         my $daysAvailable = scalar @{history()};
-        my $cpy = $apyAll / daysInYear($state->{date}) * $daysAvailable if $daysAvailable;
+        my $cpy = $apy / daysInYear($state->{date}) * ($daysAvailable-1) if defined $apy && $daysAvailable-1 >= 1;
 
         print ',', join(',', 
-            $hideBalance ? -1 : sumStr($fetcher->($state), !1),
+            $hideMoney ? -1 : sumStr($fetcher->($state), !1),
             rateStr($apy1),
             rateStr($apy7),
             rateStr($apy30),
             rateStr($apy91),
-            rateStr($apyAll),
+            rateStr($apy),
             rateStr($cpy));
     }
     print "\n";
 
-    if($state->{balance})
+    if(isStateRegular($state))
     {
-        $state->{balance} += $state->{deposit} + $state->{revenue_i} + $state->{revenue_s} + $state->{revenue_o};
+        $state->{capital} += $state->{deposit} + $state->{revenue_i} + $state->{revenue_s} + $state->{revenue_o};
         $state->{deposit} = 0;
         $state->{revenue_i} = 0;
         $state->{revenue_s} = 0;
@@ -444,9 +484,12 @@ sub flushDay($)
     }
     else
     {
-        $state->{balance} += $state->{deposit};
+        $state->{capital} += $state->{deposit};
         $state->{deposit} = 0;
     }
+    
+    $state->{asset} += $state->{assetChange};
+    $state->{assetChange} = 0;
 
     $state->{date} += 24*60*60;
     
