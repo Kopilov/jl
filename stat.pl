@@ -145,7 +145,7 @@ if($xlsxFile)
         }
 
         $event->{assetChange} += val($row, $colDebt);
-		$event->{assetChange} += val($row, $colRevenue) if 'Дефолт' eq $op;
+        $event->{assetChange} += val($row, $colRevenue) if 'Дефолт' eq $op;
         
         push(@events, $event);
     }
@@ -195,7 +195,7 @@ elsif($csvFile)
         }
 
         $event->{assetChange} += $line->[$colDebt];
-		$event->{assetChange} += $line->[$colRevenue] if 'Дефолт' eq $op;
+        $event->{assetChange} += $line->[$colRevenue] if 'Дефолт' eq $op;
 
         push(@events, $event);
     }
@@ -273,9 +273,8 @@ else
         $state->{revenue_o} += $event->{revenue_o};
     }
 
-    flushDay($state) if $state->{revenue_i} || $state->{revenue_s} || $state->{revenue_o} || $state->{deposit};
-    say "capital: ", ($hideMoney ? -1 : sumStr($state->{capital}, !1)),
-		", asset: ", ($hideMoney ? -1 : sumStr($state->{asset}, !1));
+    flushDay($state);
+    flushDay($state, 1);
 }
 exit;
 
@@ -406,9 +405,10 @@ sub apy($;$)
 }
 
 ############################################################################################
-sub flushDay($)
+sub flushDay($;$)
 {
-    my ($state) = @_;
+    my ($state, $short) = @_;
+    $short = 0 unless defined $short;
     
     push(@{history()}, {%{$state}});
     
@@ -426,8 +426,11 @@ sub flushDay($)
     if(!$headerSayed)
     {
         $headerSayed =1;
-        print "date,deposit,capital,asset,irr";
-        print ",revenue$_,apy1$_,apy7$_,apy30$_,apy91$_,apy$_,cpy$_" foreach(@fnames);
+        print "date, deposit, capital, asset, irr";
+        if(!$short)
+        {
+            print ", revenue$_, apy1$_, apy7$_, apy30$_, apy91$_, apy$_, cpy$_" foreach(@fnames);
+        }
         print "\n";
     }
     
@@ -443,34 +446,39 @@ sub flushDay($)
         #warn Dumper(\%cashflow);
         $irr = xirr(%cashflow, precision => 0.00001) if scalar keys %cashflow > 1;
     }
-    print join(',', 
+
+    print join(', ', 
         dateTs($state->{date}),
         $hideMoney ? -1 : sumStr($state->{deposit}, !1),
         $hideMoney ? -1 : sumStr($state->{capital}, !1),
-        $hideMoney ? -1 : sumStr($state->{asset}, !1),
-        rateStr($irr));
+        $hideMoney ? -1 : sumStr($state->{asset}, !1));
 
-    foreach my $fname(@fnames)
+    if(!$short)
     {
-        my $fetcher = $fetchers->{$fname};
+        print ', ', rateStr($irr);
 
-        my $apy1  = apy($fetcher, 1);
-        my $apy7  = apy($fetcher, 7);
-        my $apy30 = apy($fetcher, 30);
-        my $apy91 = apy($fetcher, 91);
-        my $apy = apy($fetcher);
-        
-        my $daysAvailable = scalar @{history()};
-        my $cpy = $apy / daysInYear($state->{date}) * ($daysAvailable-1) if defined $apy && $daysAvailable-1 >= 1;
+        foreach my $fname(@fnames)
+        {
+            my $fetcher = $fetchers->{$fname};
 
-        print ',', join(',', 
-            $hideMoney ? -1 : sumStr($fetcher->($state), !1),
-            rateStr($apy1),
-            rateStr($apy7),
-            rateStr($apy30),
-            rateStr($apy91),
-            rateStr($apy),
-            rateStr($cpy));
+            my $apy1  = apy($fetcher, 1);
+            my $apy7  = apy($fetcher, 7);
+            my $apy30 = apy($fetcher, 30);
+            my $apy91 = apy($fetcher, 91);
+            my $apy = apy($fetcher);
+            
+            my $daysAvailable = scalar @{history()};
+            my $cpy = $apy / daysInYear($state->{date}) * ($daysAvailable-1) if defined $apy && $daysAvailable-1 >= 1;
+
+            print ', ', join(', ', 
+                $hideMoney ? -1 : sumStr($fetcher->($state), !1),
+                rateStr($apy1),
+                rateStr($apy7),
+                rateStr($apy30),
+                rateStr($apy91),
+                rateStr($apy),
+                rateStr($cpy));
+        }
     }
     print "\n";
 
