@@ -4,7 +4,7 @@ use v5.10;
 use strict;
 use feature 'state';
 use utf8;
-use open qw( :std :encoding(utf-8) );
+use open qw/ :std :encoding(utf-8) /;
 use POSIX;
 use Data::Dumper;
 use Data::Dumper::Concise;
@@ -134,6 +134,10 @@ if($xlsxFile)
         {
             $event->{revenue_i} += val($row, $colRevenue);
         }
+        elsif('Уведомление о переуступке' eq $op)
+        {
+            # игнорируем, эти суммы проведены в сообытиях типа 'Дефолт'
+        }
         elsif('Покупка займа на вторичном рынке' eq $op || 'Продажа займа на вторичном рынке' eq $op)
         {
             $event->{revenue_i} += val($row, $colSIR);
@@ -184,6 +188,10 @@ elsif($csvFile)
         {
             $event->{revenue_i} += $line->[$colRevenue];
         }
+        elsif('Уведомление о переуступке' eq $op)
+        {
+            # игнорируем, эти суммы проведены в сообытиях типа 'Дефолт'
+        }
         elsif('Покупка займа на вторичном рынке' eq $op || 'Продажа займа на вторичном рынке' eq $op)
         {
             $event->{revenue_i} += $line->[$colSIR];
@@ -226,6 +234,10 @@ elsif($useApi)
             $event->{revenue_i} += $rec->{summary_interest_rate};
             $event->{revenue_s} += $rec->{revenue} - $rec->{loss};
             $event->{assetChange} += $rec->{expense} - $rec->{income} + $rec->{revenue} - $rec->{loss} + $rec->{summary_interest_rate};
+        }
+        elsif('540' eq $rec->{event_type})#Уведомление о переуступке
+        {
+            # игнорируем, эти суммы проведены в сообытиях типа 'Дефолт'
         }
         elsif('210' eq $rec->{event_type})#Выдача займа
         {
