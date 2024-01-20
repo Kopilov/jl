@@ -216,7 +216,7 @@ elsif($useApi)
     my $api = JL::Api->new();
     $api->setRetries(0);
 
-    foreach my $rec(@{$api->get('account/notifications/v3', undef, 60*10)})
+    foreach my $rec(@{$api->get('account/notifications/v3', undef, 60*1)})
     {
         my $event = { date => $rec->{date}};
         
