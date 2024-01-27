@@ -62,7 +62,8 @@ if($help || (!$csvFile && !$xlsxFile && !$useApi))
             пусто - без окон, просто за за весь доступный период
         
         суффиксы для типов доходностей
-            _i    - инвестиционная часть доходности
+            _i    - инвестиционная часть доходности, кроме дефолтов
+            _d    - дефолты и возвраты по суду
             _s    - спекулятивная (в связи с операциями на вторичке по ценам отличным от 100%)
             _o    - остальная (тут например бонусы)
             пусто - это суммарно все вышеперечисленные типы
@@ -130,9 +131,13 @@ if($xlsxFile)
         {
             $event->{deposit} += val($row, $colIn) - val($row, $colOut);
         }
-        elsif('Платеж по займу' eq $op || 'Дефолт' eq $op || 'Зачисление по судебному взысканию' eq $op)
+        elsif('Платеж по займу' eq $op)
         {
             $event->{revenue_i} += val($row, $colRevenue);
+        }
+        elsif('Дефолт' eq $op || 'Зачисление по судебному взысканию' eq $op)
+        {
+            $event->{revenue_d} += val($row, $colRevenue);
         }
         elsif('Уведомление о переуступке' eq $op)
         {
@@ -184,9 +189,13 @@ elsif($csvFile)
         {
             $event->{deposit} += $line->[$colIn] - $line->[$colOut];
         }
-        elsif('Платеж по займу' eq $op || 'Дефолт' eq $op || 'Зачисление по судебному взысканию' eq $op)
+        elsif('Платеж по займу' eq $op)
         {
             $event->{revenue_i} += $line->[$colRevenue];
+        }
+        elsif('Дефолт' eq $op || 'Зачисление по судебному взысканию' eq $op)
+        {
+            $event->{revenue_d} += $line->[$colRevenue];
         }
         elsif('Уведомление о переуступке' eq $op)
         {
@@ -224,9 +233,14 @@ elsif($useApi)
         {
             $event->{deposit} += $rec->{income} - $rec->{expense};
         }
-        elsif('310' eq $rec->{event_type} || '320' eq $rec->{event_type} || '220' eq $rec->{event_type})#Платеж по займу, Зачисление средств в рамках судебного взыскания, Дефолт
+        elsif('310' eq $rec->{event_type})#Платеж по займу
         {
             $event->{revenue_i} += $rec->{revenue} - $rec->{loss};
+            $event->{assetChange} += $rec->{expense} - $rec->{income} + $rec->{revenue} - $rec->{loss} + $rec->{summary_interest_rate};
+        }
+        elsif('320' eq $rec->{event_type} || '220' eq $rec->{event_type})#Зачисление средств в рамках судебного взыскания, Дефолт
+        {
+            $event->{revenue_d} += $rec->{revenue} - $rec->{loss};
             $event->{assetChange} += $rec->{expense} - $rec->{income} + $rec->{revenue} - $rec->{loss} + $rec->{summary_interest_rate};
         }
         elsif('340' eq $rec->{event_type} || '342' eq $rec->{event_type} || '330' eq $rec->{event_type})#Покупка займа, Покупка по стратегии, Продажа займа
@@ -266,6 +280,7 @@ else
         asset => 0,
         assetChange => 0,
         revenue_i => 0,
+        revenue_d => 0,
         revenue_s => 0,
         revenue_o => 0,
     };
@@ -281,6 +296,7 @@ else
         $state->{deposit} += $event->{deposit};
         $state->{assetChange} += $event->{assetChange};
         $state->{revenue_i} += $event->{revenue_i};
+        $state->{revenue_d} += $event->{revenue_d};
         $state->{revenue_s} += $event->{revenue_s};
         $state->{revenue_o} += $event->{revenue_o};
     }
@@ -371,9 +387,10 @@ sub isStateRegular($)
     return
         $state->{capital} > 0 &&
         $state->{capital} + $state->{revenue_i} > 0 && 
+        $state->{capital} + $state->{revenue_d} > 0 && 
         $state->{capital} + $state->{revenue_s} > 0 && 
         $state->{capital} + $state->{revenue_o} > 0 && 
-        $state->{capital} + $state->{revenue_i} + $state->{revenue_s} + $state->{revenue_o} > 0;
+        $state->{capital} + $state->{revenue_i} + $state->{revenue_d} + $state->{revenue_s} + $state->{revenue_o} > 0;
 }
 
 ############################################################################################
@@ -427,21 +444,22 @@ sub flushDay($;$)
     my $fetchers = 
     {
         _i => sub { return $_[0]->{revenue_i}; },
+        _d => sub { return $_[0]->{revenue_d}; },
         _s => sub { return $_[0]->{revenue_s}; },
         _o => sub { return $_[0]->{revenue_o}; },
-        ''  => sub { return $_[0]->{revenue_i} + $_[0]->{revenue_s} + $_[0]->{revenue_o}; },
+        ''  => sub { return $_[0]->{revenue_i} + $_[0]->{revenue_d} + $_[0]->{revenue_s} + $_[0]->{revenue_o}; },
     };
     
-    my @fnames = ('', '_i', '_s', '_o');
+    my @fnames = ('', '_i', '_d', '_s', '_o');
     
     state $headerSayed = 0;
     if(!$headerSayed)
     {
         $headerSayed =1;
-        print "date, deposit, capital, asset, irr";
+        print "date,deposit,capital,asset,irr";
         if(!$short)
         {
-            print ", revenue$_, apy1$_, apy7$_, apy30$_, apy91$_, apy$_, cpy$_" foreach(@fnames);
+            print ",revenue$_,apy1$_,apy7$_,apy30$_,apy91$_,apy$_,cpy$_" foreach(@fnames);
         }
         print "\n";
     }
@@ -454,12 +472,12 @@ sub flushDay($;$)
         {
             $cashflow{dateTs($hrec->{date})} = $hrec->{deposit} if $hrec->{deposit};
         }
-        $cashflow{dateTs($state->{date})} -= $state->{capital} + $state->{deposit} + $state->{revenue_i} + $state->{revenue_s} + $state->{revenue_o};
+        $cashflow{dateTs($state->{date})} -= $state->{capital} + $state->{deposit} + $state->{revenue_i} + $state->{revenue_d} + $state->{revenue_s} + $state->{revenue_o};
         #warn Dumper(\%cashflow);
         $irr = xirr(%cashflow, precision => 0.00001) if scalar keys %cashflow > 1;
     }
 
-    print join(', ', 
+    print join(', ',
         dateTs($state->{date}),
         $hideMoney ? -1 : sumStr($state->{deposit}, !1),
         $hideMoney ? -1 : sumStr($state->{capital}, !1),
@@ -467,7 +485,7 @@ sub flushDay($;$)
 
     if(!$short)
     {
-        print ', ', rateStr($irr);
+        print ',', rateStr($irr);
 
         foreach my $fname(@fnames)
         {
@@ -482,7 +500,7 @@ sub flushDay($;$)
             my $daysAvailable = scalar @{history()};
             my $cpy = $apy / daysInYear($state->{date}) * ($daysAvailable-1) if defined $apy && $daysAvailable-1 >= 1;
 
-            print ', ', join(', ', 
+            print ',', join(',',
                 $hideMoney ? -1 : sumStr($fetcher->($state), !1),
                 rateStr($apy1),
                 rateStr($apy7),
@@ -496,9 +514,10 @@ sub flushDay($;$)
 
     if(isStateRegular($state))
     {
-        $state->{capital} += $state->{deposit} + $state->{revenue_i} + $state->{revenue_s} + $state->{revenue_o};
+        $state->{capital} += $state->{deposit} + $state->{revenue_i} + $state->{revenue_d} + $state->{revenue_s} + $state->{revenue_o};
         $state->{deposit} = 0;
         $state->{revenue_i} = 0;
+        $state->{revenue_d} = 0;
         $state->{revenue_s} = 0;
         $state->{revenue_o} = 0;
     }
