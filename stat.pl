@@ -51,7 +51,7 @@ if($help || (!$csvFile && !$xlsxFile && !$useApi))
     скопипастить в него выхлоп скрипта, внимательно проследить чтобы при копипасте не нарушилась табличная структура данных, чтобы все чиселки попали в такие же на шаблоне
     наблюдать графики, легенда:
         семантика
-            cpy - Current Percentage Yield, доход кумулятивно в процентах
+            cpy - Cumulative Percentage Yield, доход в процентах кумулятивно
             apy - Annual Percentage Yield, доходность годовых
             irr - Internal Rate of Return, это то что все считают по функции XIRR, практически то же самое что 'apy' (не будет работать если не обеспечить соответствующий перловый модуль)
         
@@ -394,13 +394,14 @@ sub isStateRegular($)
 }
 
 ############################################################################################
-sub apy($;$)
+sub xpy($$;$)
 {
-    state $weightLikeXirr = 0;
+    state $weightLikeXirr = 1;
     
     my $daysAvailable = scalar @{history()};
     
-    my ($fetcher, $days) = @_;
+    my ($mode, $fetcher, $days) = @_;
+    die "wrong xpy mode: $mode" unless 'apy' eq $mode or 'cpy' eq $mode;
     $days = $daysAvailable unless defined $days;
     
     if($days <= $daysAvailable)
@@ -417,17 +418,45 @@ sub apy($;$)
             if($i >= $startIdx && isStateRegular($hrec))
             {
                 state $log2 = log(2);
-                my $value = log(($fetcher->($hrec) + $hrec->{capital}) / $hrec->{capital}) / $log2;
-                my $daysInYear = daysInYear($hrec->{date});
-                $sumValue += $value * $daysInYear * $weight;
-                $sumWeight += $weight;
+                my $dayValue = log(($fetcher->($hrec) + $hrec->{capital}) / $hrec->{capital}) / $log2;
+                if('apy' eq $mode)
+                {
+                    my $daysInYear = daysInYear($hrec->{date});
+                    $sumValue += $dayValue * $daysInYear * $weight;
+                    $sumWeight += $weight;
+                }
+                elsif('cpy' eq $mode)
+                {
+                    $sumValue += $dayValue;
+                }
+                else
+                {
+                    die;
+                }
             }
             
-            $weight += $hrec->{deposit} if $weightLikeXirr;
-            $weight += $hrec->{deposit} + $fetcher->($hrec) unless $weightLikeXirr;
+            if('apy' eq $mode)
+            {
+                $weight += $hrec->{deposit} if $weightLikeXirr;
+                $weight += $hrec->{deposit} + $fetcher->($hrec) unless $weightLikeXirr;
+            }
+        }
+
+        my $res;
+        if('apy' eq $mode)
+        {
+            $res = (2 ** ($sumValue / $sumWeight)) - 1 if $sumWeight;
+        }
+        elsif('cpy' eq $mode)
+        {
+            $res = (2 ** $sumValue) - 1;
+        }
+        else
+        {
+            die;
         }
         
-        return (2 ** ($sumValue / $sumWeight)) - 1 if $sumWeight;
+        return $res;
     }
     
     return undef;
@@ -491,14 +520,15 @@ sub flushDay($;$)
         {
             my $fetcher = $fetchers->{$fname};
 
-            my $apy1  = apy($fetcher, 1);
-            my $apy7  = apy($fetcher, 7);
-            my $apy30 = apy($fetcher, 30);
-            my $apy91 = apy($fetcher, 91);
-            my $apy = apy($fetcher);
+            my $apy1  = xpy('apy', $fetcher, 1);
+            my $apy7  = xpy('apy', $fetcher, 7);
+            my $apy30 = xpy('apy', $fetcher, 30);
+            my $apy91 = xpy('apy', $fetcher, 91);
+            my $apy = xpy('apy', $fetcher);
             
-            my $daysAvailable = scalar @{history()};
-            my $cpy = $apy / daysInYear($state->{date}) * ($daysAvailable-1) if defined $apy && $daysAvailable-1 >= 1;
+            #my $daysAvailable = scalar @{history()};
+            #my $cpy = $apy / daysInYear($state->{date}) * ($daysAvailable-1) if defined $apy && $daysAvailable-1 >= 1;
+            my $cpy = xpy('cpy', $fetcher);
 
             print ',', join(',',
                 $hideMoney ? -1 : sumStr($fetcher->($state), !1),
