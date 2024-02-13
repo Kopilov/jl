@@ -394,21 +394,40 @@ sub isStateRegular($)
 }
 
 ############################################################################################
-sub xpy($$;$)
+sub log2($)
 {
-    state $weightLikeXirr = 1;
+    my $x = shift;
+    return undef unless defined $x and $x > 0;
+    
+    state $log_e_2 = log(2);
+    return log($x) / $log_e_2;
+}
+
+############################################################################################
+sub exp2($)
+{
+    my $x = shift;
+    return undef unless defined $x;
+    return 2 ** $x;
+}
+
+############################################################################################
+sub percentageYield($;$)
+{
+    state $annualWeightLikeXirr = 1;
     
     my $daysAvailable = scalar @{history()};
     
-    my ($mode, $fetcher, $days) = @_;
-    die "wrong xpy mode: $mode" unless 'apy' eq $mode or 'cpy' eq $mode;
+    my ($fetcher, $days) = @_;
     $days = $daysAvailable unless defined $days;
     
     if($days <= $daysAvailable)
     {
-        my $sumValue = 0;
-        my $sumWeight = 0;
-        my $weight = 0;
+        my $cumulative;
+    
+        my $annualSumValue;
+        my $annualSumWeight;
+        my $annualWeight;
         
         my $startIdx = $daysAvailable - $days;
         for(my $i=0; $i<$daysAvailable; ++$i)
@@ -417,46 +436,24 @@ sub xpy($$;$)
             
             if($i >= $startIdx && isStateRegular($hrec))
             {
-                state $log2 = log(2);
-                my $dayValue = log(($fetcher->($hrec) + $hrec->{capital}) / $hrec->{capital}) / $log2;
-                if('apy' eq $mode)
-                {
-                    my $daysInYear = daysInYear($hrec->{date});
-                    $sumValue += $dayValue * $daysInYear * $weight;
-                    $sumWeight += $weight;
-                }
-                elsif('cpy' eq $mode)
-                {
-                    $sumValue += $dayValue;
-                }
-                else
-                {
-                    die;
-                }
+                my $daily = log2(($fetcher->($hrec) + $hrec->{capital}) / $hrec->{capital});
+
+                $cumulative += $daily;
+                
+                $annualSumValue += $daily * daysInYear($hrec->{date}) * $annualWeight;
+                $annualSumWeight += $annualWeight;
             }
             
-            if('apy' eq $mode)
-            {
-                $weight += $hrec->{deposit} if $weightLikeXirr;
-                $weight += $hrec->{deposit} + $fetcher->($hrec) unless $weightLikeXirr;
-            }
+            $annualWeight += $hrec->{deposit};
+            $annualWeight += $fetcher->($hrec) unless $annualWeightLikeXirr;
         }
 
-        my $res;
-        if('apy' eq $mode)
-        {
-            $res = (2 ** ($sumValue / $sumWeight)) - 1 if $sumWeight;
-        }
-        elsif('cpy' eq $mode)
-        {
-            $res = (2 ** $sumValue) - 1;
-        }
-        else
-        {
-            die;
-        }
-        
-        return $res;
+        $cumulative = exp2($cumulative) - 1 if defined $cumulative;
+
+        my $annual = $annualSumValue / $annualSumWeight if defined $annualSumWeight;
+        $annual = exp2($annual) - 1 if defined $annual;
+
+        return ($cumulative, $annual);
     }
     
     return undef;
@@ -520,16 +517,12 @@ sub flushDay($;$)
         {
             my $fetcher = $fetchers->{$fname};
 
-            my $apy1  = xpy('apy', $fetcher, 1);
-            my $apy7  = xpy('apy', $fetcher, 7);
-            my $apy30 = xpy('apy', $fetcher, 30);
-            my $apy91 = xpy('apy', $fetcher, 91);
-            my $apy = xpy('apy', $fetcher);
+            my ($cpy1 , $apy1 ) = percentageYield($fetcher, 1);
+            my ($cpy7 , $apy7 ) = percentageYield($fetcher, 7);
+            my ($cpy30, $apy30) = percentageYield($fetcher, 30);
+            my ($cpy91, $apy91) = percentageYield($fetcher, 91);
+            my ($cpy  , $apy  ) = percentageYield($fetcher);
             
-            #my $daysAvailable = scalar @{history()};
-            #my $cpy = $apy / daysInYear($state->{date}) * ($daysAvailable-1) if defined $apy && $daysAvailable-1 >= 1;
-            my $cpy = xpy('cpy', $fetcher);
-
             print ',', join(',',
                 $hideMoney ? -1 : sumStr($fetcher->($state), !1),
                 rateStr($apy1),
