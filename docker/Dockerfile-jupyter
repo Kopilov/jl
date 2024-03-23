@@ -1,4 +1,4 @@
-FROM jl-core:latest
+FROM jl-core:1.0
 
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get -y upgrade && apt-get install -y tzdata
