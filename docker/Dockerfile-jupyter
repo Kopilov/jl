@@ -7,7 +7,10 @@ RUN rm /etc/localtime && echo "UTC" > /etc/timezone.
 RUN dpkg-reconfigure -f noninteractive tzdata
 
 RUN apt-get install -y python3.10 python3-pip openjdk-17-jdk git
-RUN useradd lab; mkdir /home/lab; chown lab:lab /home/lab
+RUN useradd lab; mkdir /home/lab
+COPY stat.ipynb /home/lab
+COPY stat.xlsx /home/lab
+RUN chown -R lab:lab /home/lab
 USER lab:lab
 ENV PATH=$PATH:/home/lab/.local/bin
 RUN pip install jupyterlab
