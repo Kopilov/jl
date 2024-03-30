@@ -1,6 +1,6 @@
 FROM ubuntu:jammy
 
-RUN apt-get -y update && apt-get -y install make perl-modules-5.34 libdata-dumper-concise-perl liblist-moreutils-perl libdate-calc-perl libspreadsheet-parsexlsx-perl
+RUN apt-get -y update && apt-get -y upgrade && apt-get -y install make perl-modules-5.34 libdata-dumper-concise-perl liblist-moreutils-perl libdate-calc-perl libspreadsheet-parsexlsx-perl
 RUN echo yes | cpan -ifT Finance::Math::IRR
 
 COPY stat.pl /usr/local/bin

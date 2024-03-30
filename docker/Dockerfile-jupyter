@@ -1,4 +1,4 @@
-FROM jl-core:1.0
+FROM jl-core:1.1
 
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get -y upgrade && apt-get install -y tzdata
@@ -6,10 +6,10 @@ RUN apt-get update && apt-get -y upgrade && apt-get install -y tzdata
 RUN rm /etc/localtime && echo "UTC" > /etc/timezone.
 RUN dpkg-reconfigure -f noninteractive tzdata
 
-RUN apt-get install -y python3.10 python3-pip openjdk-17-jdk git
+RUN apt-get install -y python3.10 python3-pip openjdk-21-jdk git
 RUN useradd lab; mkdir /home/lab
 COPY stat.ipynb /home/lab
-COPY stat.xlsx /home/lab
+COPY statTemplate.xlsx /home/lab
 RUN chown -R lab:lab /home/lab
 USER lab:lab
 ENV PATH=$PATH:/home/lab/.local/bin
@@ -17,4 +17,4 @@ RUN pip install jupyterlab
 RUN pip install kotlin-jupyter-kernel
 ENV KOTLIN_JUPYTER_JAVA_OPTS="--add-opens=java.base/java.nio=ALL-UNNAMED"
 WORKDIR /home/lab
-CMD jupyter-lab
+CMD jupyter-lab --ip=0.0.0.0 --JupyterApp.token='' --no-browser
