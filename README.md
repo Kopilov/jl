@@ -20,8 +20,8 @@
         `./stat.pl --csv c:/path/to/transactions.csv`
 
 4. Смотреть результат:  
-    Взять комплектный шаблон отсюда https://github.com/Kopilov/jl/raw/main/stat.xlsx  
-    Cкопипастить в него выхлоп скрипта, внимательно проследить чтобы при копипасте не нарушилась табличная структура данных, чтобы все чиселки попали в такие же на шаблоне.
+    Взять комплектный шаблон отсюда https://github.com/Kopilov/jl/raw/main/statTemplate.xlsx  
+    Cкопипастить на вкладку `data` выхлоп скрипта, внимательно проследить чтобы при копипасте не нарушилась табличная структура данных, чтобы все поля попали в такие же на шаблоне.
 
     Наблюдать графики, легенда:
 ```
@@ -51,37 +51,37 @@
 1. Ставить перл:  
     https://strawberryperl.com/releases.html
     PDL edition, на тот момент это было https://github.com/StrawberryPerl/Perl-Dist-Strawberry/releases/download/SP_5380_5361/strawberry-perl-5.38.0.1-64bit-PDL.zip
-    распаковать в c:\perl64
+    — распаковать в c:\perl64
 
-2. Добавить в переменную окружения `PATH` пару путей на инфраструктуру к перлу, в моем случае это  
-    `C:\perl64\perl\bin`
-    `C:\perl64\c\bin`
+2. Добавить в переменную окружения `PATH` пару путей на инфраструктуру к перлу, в моем случае это:  
+    `C:\perl64\perl\bin`  
+    `C:\perl64\c\bin`  
     (правой мышью на кнопке пуск, Система, Дополнительные параметры системы, кнопка Переменные среды, переменная Path, добавляенм пару значений)
 
 3. Добавить к перлу необходимые модули:  
-    в консоли выполняем такую команду
+    В консоли выполняем такую команду:  
     `cpan install Finance::Math::IRR`
 
 4. Екзель?  
-    екзель я не осилил как установить, офис360 везде, наверное это оно и есть, но оно хочет денег, в общем плюнул
-    беру libreoffice отсюда 
-        https://www.libreoffice.org/download/download-libreoffice/
-        https://download.documentfoundation.org/libreoffice/stable/7.6.4/win/x86_64/LibreOffice_7.6.4_Win_x86-64.msi.mirrorlist
+    Екзель я не осилил как установить, офис360 везде, наверное это оно и есть, но оно хочет денег, в общем плюнул,
+    беру libreoffice отсюда:  
+        https://www.libreoffice.org/download/download-libreoffice/  
+        https://download.documentfoundation.org/libreoffice/stable/7.6.4/win/x86_64/LibreOffice_7.6.4_Win_x86-64.msi.mirrorlist  
         https://mirror.truenetwork.ru/tdf/libreoffice/stable/7.6.4/win/x86_64/LibreOffice_7.6.4_Win_x86-64.msi
 
-5. Забрать скрипт и шаблон отсюда  
-    https://github.com/Kopilov/jl/raw/main/stat.pl
-    https://github.com/Kopilov/jl/raw/main/stat.xlsx
-    сохраняем куда-нибудь
+5. Забрать скрипт и шаблон отсюда:  
+    https://github.com/Kopilov/jl/raw/main/stat.pl  
+    https://github.com/Kopilov/jl/raw/main/statTemplate.xlsx  
+    Сохраняем куда-нибудь.
 
 6. Забрать лог транзакций  
-    с сайта джетленда забрать файл transactions.xlsx, сохранить туда же
+    С сайта джетленда забрать файл transactions.xlsx, сохранить туда же.
 
 7. Запускаем в консоли  
     `perl stat.pl --xlsx transactions.xlsx > yield.csv`
 
 8. Смотрим  
-    файл yield.csv открываем текстовым редактором или самим екзелем, копируем из него данные в буфер обмена
-    офисом открываем stat.xlsx и вставляем в него скопированные данные, 
-    при вставке внимательно смотрим чтобы табличная структура не попортилась, по необходимости конфигурируем параметры вставки
-    наблюдаем графики
+    Файл yield.csv открываем текстовым редактором или самим екзелем, копируем из него данные в буфер обмена.
+    Офисом открываем statTemplate и вставляем в него скопированные данные, 
+    при вставке внимательно смотрим чтобы табличная структура не попортилась, по необходимости конфигурируем параметры вставки.
+    Наблюдаем графики.
